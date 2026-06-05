@@ -1,0 +1,82 @@
+services:
+  # ───────────────────────────────────────────────
+  # PostgreSQL Database
+  # ───────────────────────────────────────────────
+  database:
+    build:
+      context: ./database
+      dockerfile: Dockerfile
+    container_name: sms-database
+    environment:
+      POSTGRES_DB: studentdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d studentdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ───────────────────────────────────────────────
+  # FastAPI Backend
+  # ───────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sms-backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres123@database:5432/studentdb
+    ports:
+      - "8000:8000"
+    networks:
+      - app-network
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/students')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ───────────────────────────────────────────────
+  # React Frontend (served by Nginx)
+  # ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sms-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+# ───────────────────────────────────────────────
+# Volumes & Networks
+# ───────────────────────────────────────────────
+volumes:
+  pgdata:
+
+networks:
+  app-network:
+    driver: bridge

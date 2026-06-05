@@ -1,0 +1,6 @@
+/* stylelint-disable at-rule-no-unknown */
+/* If your linter complains about "@tailwind" unknown at-rule, the above disables
+	the stylelint rule for this file. Tailwind directives below are required. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
