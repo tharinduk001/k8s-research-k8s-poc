@@ -67,22 +67,18 @@ jobs:
 
       - name: Verify GCP Authentication
         run: |
-          echo "Checking GCP authentication..."
-          gcloud auth list
-          gcloud config get-value project
-          echo "✅ GCP authentication verified"
+          gcloud auth configure-docker asia-south1-docker.pkg.dev --quiet
+          echo "✅ Docker authenticated with Artifact Registry"
 
       - name: Set image tags
         id: image
+        id: image
         run: |
           IMAGE_NAME="${{ matrix.service }}"
-          IMAGE_TAG="${REGISTRY_HOSTNAME}/${GCP_PROJECT_ID}/${IMAGE_NAME}:${{ github.sha }}"
-          IMAGE_TAG_LATEST="${REGISTRY_HOSTNAME}/${GCP_PROJECT_ID}/${IMAGE_NAME}:latest"
+          IMAGE_TAG="asia-south1-docker.pkg.dev/${GCP_PROJECT_ID}/containers/${IMAGE_NAME}:${{ github.sha }}"
+          IMAGE_TAG_LATEST="asia-south1-docker.pkg.dev/${GCP_PROJECT_ID}/containers/${IMAGE_NAME}:latest"
           echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "tag_latest=${IMAGE_TAG_LATEST}" >> $GITHUB_OUTPUT
-          echo "Image will be tagged as:"
-          echo "  ${IMAGE_TAG}"
-          echo "  ${IMAGE_TAG_LATEST}"
 
       - name: Build Docker image - ${{ matrix.service }}
         run: |
