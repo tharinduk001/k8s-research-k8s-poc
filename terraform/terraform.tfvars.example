@@ -1,0 +1,38 @@
+# Example Terraform Configuration
+# Copy this to terraform.tfvars and update values
+
+# Required: GCP Project ID
+gcp_project_id = "your-gcp-project-id"
+
+# Optional: GCP Region (default: asia-south1)
+# Supported: asia-south1, us-central1, europe-west1, us-east1
+gcp_region = "asia-south1"
+
+# Optional: Service Account name (default: github-actions-sa)
+service_account_name = "github-actions-sa"
+
+# Optional: Service Account display name
+service_account_display_name = "GitHub Actions Service Account"
+
+# Optional: Artifact Registry repository name (default: containers)
+artifact_registry_repository = "containers"
+
+# Optional: Artifact Registry format (default: DOCKER)
+# Supported: DOCKER, MAVEN, NPM, PYTHON, APT, YUM, GOOGET, GENERIC
+artifact_registry_format = "DOCKER"
+
+# Optional: Whether to create Artifact Registry (default: true)
+create_artifact_registry = true
+
+# Optional: Whether to enable required APIs (default: true)
+enable_apis = true
+
+# Optional: Docker image names for documentation
+docker_images = ["backend", "database", "frontend"]
+
+# Optional: Tags to apply to resources
+tags = {
+  environment = "github-actions"
+  managed_by  = "terraform"
+  purpose     = "ci-cd-pipeline"
+}
