@@ -160,10 +160,42 @@ gcloud container images list-tags gcr.io/YOUR-PROJECT-ID/backend
 
 ## Troubleshooting
 
+### Permission Denied Error: `artifactregistry.repositories.uploadArtifacts`
+This error means the service account doesn't have required permissions. **Quick fix:**
+
+```bash
+# Run this from the project directory
+chmod +x fix-gcp-permissions.sh
+./fix-gcp-permissions.sh my-k8s-project-499007
+```
+
+Or manually add permissions:
+```bash
+export PROJECT_ID="my-k8s-project-499007"
+export SERVICE_ACCOUNT_EMAIL="github-actions-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/storage.admin"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/viewer"
+```
+
+Then regenerate the key:
+```bash
+gcloud iam service-accounts keys create gcp-key.json \
+  --iam-account=$SERVICE_ACCOUNT_EMAIL
+```
+
+And update the `GCP_SA_KEY` secret in GitHub with the new key content.
+
 ### Authentication Failed
-- ✓ Verify `GCP_SA_KEY` secret is set correctly
-- ✓ Ensure the entire JSON content is copied
-- ✓ Check service account has required roles
+- ✓ Verify `GCP_SA_KEY` secret is set correctly with **entire JSON content**
+- ✓ Ensure line breaks and formatting are preserved when copying
+- ✓ Check service account has both `Storage Admin` AND `Viewer` roles
+- ✓ Regenerate the key if it's old or corrupted
 
 ### Build Failed
 - ✓ Check Dockerfile paths are correct
@@ -173,12 +205,16 @@ gcloud container images list-tags gcr.io/YOUR-PROJECT-ID/backend
 ### Images Not Pushed
 - ✓ Check Container Registry API is enabled
 - ✓ Verify service account has `Storage Admin` role
+- ✓ Verify service account has `Viewer` role
 - ✓ Check GCP project quota limits
+- ✓ Ensure the GCP_PROJECT_ID secret matches your actual project
 
 ### View Detailed Logs
 1. Go to **Actions** → Select failed workflow run
 2. Click on the job to see detailed logs
-3. Check specific step output for error messages
+3. Check the **Authenticate to Google Cloud** step output
+4. Check the **Configure Docker for GCP** step output
+5. Check the **Push to GCP Container Registry** step output
 
 ---
 
