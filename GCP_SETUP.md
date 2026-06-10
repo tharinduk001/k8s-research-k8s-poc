@@ -1,270 +1,355 @@
-# GitHub Actions + GCP Container Registry Setup Guide
+# GCP Setup for GitHub Actions + Artifact Registry
 
-This guide will help you configure GitHub Actions to automatically build and push your Docker images to Google Cloud Platform (GCP) Container Registry.
+This is the **single source of truth** for setting up GitHub Actions to build and push Docker images to Google Cloud Platform's Artifact Registry.
 
-## Overview
+## Quick Summary
 
-The workflow (`build-push-gcp.yml`) will:
-- Trigger on pushes to `main`, `master`, or `develop` branches
-- Build Docker images for: backend, database, and frontend
-- Push images to GCP Container Registry (gcr.io)
-- Tag images with commit SHA and `latest`
-- Optional: Scan images with Trivy for vulnerabilities
+Your project is configured to:
+- Build 3 Docker images: `backend`, `database`, `frontend`
+- Push to **Artifact Registry** at `asia-south1-docker.pkg.dev`
+- Trigger on push to `main`, `master`, or `develop` branches
+- Use a GCP service account with proper IAM roles
+
+---
 
 ## Prerequisites
 
-1. A GCP project with Compute Engine and Container Registry enabled
-2. A GitHub repository (public or private)
-3. Admin access to both GCP and GitHub
+1. GCP project with required APIs enabled
+2. GitHub repository (public or private)
+3. `gcloud` CLI installed locally
+4. Service account with proper roles
 
 ---
 
 ## Step 1: Enable Required GCP APIs
 
-Run these commands in GCP Cloud Shell or locally with `gcloud`:
-
 ```bash
 gcloud services enable \
+  artifactregistry.googleapis.com \
   containerregistry.googleapis.com \
-  compute.googleapis.com \
-  iam.googleapis.com
+  iam.googleapis.com \
+  --project=YOUR-GCP-PROJECT-ID
 ```
 
 ---
 
-## Step 2: Create a GCP Service Account
+## Step 2: Create Service Account and Grant Roles
 
-### Option A: Using gcloud CLI (Recommended)
+Replace `YOUR-GCP-PROJECT-ID` with your actual GCP project ID (e.g., `my-k8s-project-499007`)
+
+### Create the service account:
 
 ```bash
-# Set your GCP project ID
-export PROJECT_ID="your-gcp-project-id"
+export PROJECT_ID="YOUR-GCP-PROJECT-ID"
 export SERVICE_ACCOUNT_NAME="github-actions-sa"
 
-# Create the service account
 gcloud iam service-accounts create $SERVICE_ACCOUNT_NAME \
   --display-name="GitHub Actions Service Account" \
   --project=$PROJECT_ID
-
-# Grant permissions to push to Container Registry
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/storage.admin"
-
-# Create a JSON key
-gcloud iam service-accounts keys create gcp-key.json \
-  --iam-account=${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com \
-  --project=$PROJECT_ID
-
-echo "Service account key created: gcp-key.json"
 ```
 
-### Option B: Using GCP Console
-
-1. Go to **GCP Console** → **IAM & Admin** → **Service Accounts**
-2. Click **Create Service Account**
-3. Fill in:
-   - Service Account ID: `github-actions-sa`
-   - Display Name: `GitHub Actions Service Account`
-4. Click **Create and Continue**
-5. Assign this role:
-   - `Storage Admin` (for Container Registry access)
-6. Click **Continue** → **Done**
-7. Click on the created service account
-8. Go to **Keys** tab → **Add Key** → **Create new key**
-9. Select **JSON** and click **Create**
-10. Save the JSON file securely
-
----
-
-## Step 3: Add GitHub Secrets
-
-### In Your GitHub Repository:
-
-1. Go to **Settings** → **Secrets and variables** → **Actions**
-2. Click **New repository secret**
-3. Add the following secrets:
-
-#### Secret 1: GCP_PROJECT_ID
-- Name: `GCP_PROJECT_ID`
-- Value: Your GCP Project ID (e.g., `my-k8s-project-499007`)
-
-#### Secret 2: GCP_SA_KEY
-- Name: `GCP_SA_KEY`
-- Value: Contents of the `gcp-key.json` file created in Step 2
-  - Copy the entire JSON content from the key file
-  - Paste it as the secret value
-
----
-
-## Step 4: Update Your GitHub Repository
-
-Push these files to your repository:
+### Grant required IAM roles:
 
 ```bash
-git add .github/workflows/build-push-gcp.yml
-git add GCP_SETUP.md
-git commit -m "Add GitHub Actions workflow for GCP Container Registry"
+SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# For Artifact Registry (pushing images to asia-south1-docker.pkg.dev)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/artifactregistry.writer"
+
+# For Cloud Storage (fallback for gcr.io if needed)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/storage.admin"
+
+# For viewing GCP resources
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/viewer"
+```
+
+### Verify roles were assigned:
+
+```bash
+gcloud projects get-iam-policy $PROJECT_ID \
+  --flatten="bindings[].members" \
+  --format="table(bindings.role)" \
+  --filter="bindings.members:$SERVICE_ACCOUNT_EMAIL"
+```
+
+Expected output:
+```
+ROLE
+roles/artifactregistry.writer
+roles/storage.admin
+roles/viewer
+```
+
+---
+
+## Step 3: Create and Download Service Account Key
+
+```bash
+gcloud iam service-accounts keys create key.json \
+  --iam-account=$SERVICE_ACCOUNT_EMAIL \
+  --project=$PROJECT_ID
+```
+
+This creates `key.json` in your current directory.
+
+**⚠️ Important**: Keep this file secure. Never commit it to version control.
+
+---
+
+## Step 4: Add GitHub Secrets
+
+1. Go to your GitHub repository
+2. Navigate to **Settings** → **Secrets and variables** → **Actions**
+3. Click **New repository secret**
+
+### Add these two secrets:
+
+#### Secret 1: `GCP_PROJECT_ID`
+- **Name**: `GCP_PROJECT_ID`
+- **Value**: Your GCP project ID (e.g., `my-k8s-project-499007`)
+
+#### Secret 2: `GCP_SA_KEY`
+- **Name**: `GCP_SA_KEY`
+- **Value**: Full contents of `key.json`
+
+To copy the key content:
+```bash
+cat key.json
+```
+
+Then:
+1. Copy the entire output (from `{` to `}`)
+2. Paste into the GitHub secret value field
+3. Click **Add secret**
+
+---
+
+## Step 5: Verify Workflow Configuration
+
+The workflow file is at: `.github/workflows/build-push-gcp.yml`
+
+It's already configured to:
+- Use Artifact Registry at `asia-south1-docker.pkg.dev`
+- Build images for: `backend`, `database`, `frontend`
+- Tag with commit SHA and `latest`
+- Authenticate using `GCP_SA_KEY` secret
+
+No changes needed to the workflow file.
+
+---
+
+## Step 6: Test the Workflow
+
+### Option A: Manual Trigger (Instant)
+
+1. Go to GitHub → **Actions** tab
+2. Select **Build and Push to GCP Container Registry**
+3. Click **Run workflow** → **Run workflow**
+
+### Option B: Push to Trigger
+
+```bash
+git add .
+git commit -m "Trigger GitHub Actions workflow"
 git push origin main
 ```
 
----
-
-## Step 5: Verify the Workflow
-
-1. Go to your GitHub repository
-2. Click **Actions** tab
-3. You should see the `Build and Push to GCP Container Registry` workflow
-4. Make a test push or commit to trigger it
-5. Monitor the workflow run to ensure it completes successfully
-
----
-
-## Workflow Triggers
-
-The workflow runs automatically when:
-- You push to `main`, `master`, or `develop` branches
-- Changes are made to `backend/`, `database/`, or `frontend/` directories
-- The workflow file itself is modified
-
-You can also manually trigger it:
-1. Go to **Actions** tab
-2. Select the workflow
-3. Click **Run workflow** → **Run workflow**
+The workflow triggers on push to `main`, `master`, or `develop` branches.
 
 ---
 
 ## Accessing Your Images
 
-After a successful build, your images will be available at:
+After successful build, images are available at:
 
 ```
-gcr.io/YOUR-PROJECT-ID/backend:COMMIT-SHA
-gcr.io/YOUR-PROJECT-ID/backend:latest
-
-gcr.io/YOUR-PROJECT-ID/database:COMMIT-SHA
-gcr.io/YOUR-PROJECT-ID/database:latest
-
-gcr.io/YOUR-PROJECT-ID/frontend:COMMIT-SHA
-gcr.io/YOUR-PROJECT-ID/frontend:latest
+asia-south1-docker.pkg.dev/YOUR-PROJECT-ID/containers/backend:latest
+asia-south1-docker.pkg.dev/YOUR-PROJECT-ID/containers/database:latest
+asia-south1-docker.pkg.dev/YOUR-PROJECT-ID/containers/frontend:latest
 ```
 
-### View images in GCP:
+### List images in GCP:
 
 ```bash
-gcloud container images list --project=YOUR-PROJECT-ID
-gcloud container images list-tags gcr.io/YOUR-PROJECT-ID/backend
+gcloud artifacts repositories list --project=$PROJECT_ID
+
+gcloud artifacts docker images list \
+  asia-south1-docker.pkg.dev/$PROJECT_ID/containers \
+  --project=$PROJECT_ID
+```
+
+### View specific image tags:
+
+```bash
+gcloud artifacts docker images list \
+  asia-south1-docker.pkg.dev/$PROJECT_ID/containers/backend \
+  --include-tags \
+  --project=$PROJECT_ID
 ```
 
 ---
 
 ## Troubleshooting
 
-### Permission Denied Error: `artifactregistry.repositories.uploadArtifacts`
-This error means the service account doesn't have required permissions. **Quick fix:**
+### Workflow fails with "Permission denied" error
 
-```bash
-# Run this from the project directory
-chmod +x fix-gcp-permissions.sh
-./fix-gcp-permissions.sh my-k8s-project-499007
-```
+**Problem**: Service account doesn't have required roles
 
-Or manually add permissions:
+**Solution**: Re-run the role assignment commands from Step 2:
 ```bash
-export PROJECT_ID="my-k8s-project-499007"
-export SERVICE_ACCOUNT_EMAIL="github-actions-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+export PROJECT_ID="YOUR-GCP-PROJECT-ID"
+SERVICE_ACCOUNT_EMAIL="github-actions-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/artifactregistry.writer"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
   --role="roles/storage.admin"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-  --role="roles/viewer"
 ```
 
-Then regenerate the key:
-```bash
-gcloud iam service-accounts keys create gcp-key.json \
-  --iam-account=$SERVICE_ACCOUNT_EMAIL
-```
+### "Authentication failed" error
 
-And update the `GCP_SA_KEY` secret in GitHub with the new key content.
+**Problem**: `GCP_SA_KEY` secret is invalid or corrupted
 
-### Authentication Failed
-- ✓ Verify `GCP_SA_KEY` secret is set correctly with **entire JSON content**
-- ✓ Ensure line breaks and formatting are preserved when copying
-- ✓ Check service account has both `Storage Admin` AND `Viewer` roles
-- ✓ Regenerate the key if it's old or corrupted
+**Solution**:
+1. Regenerate the key:
+   ```bash
+   export PROJECT_ID="YOUR-GCP-PROJECT-ID"
+   SERVICE_ACCOUNT_EMAIL="github-actions-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+   
+   gcloud iam service-accounts keys create new-key.json \
+     --iam-account=$SERVICE_ACCOUNT_EMAIL
+   ```
 
-### Build Failed
-- ✓ Check Dockerfile paths are correct
-- ✓ Verify Docker build context is valid
-- ✓ Look at workflow logs for detailed errors
+2. Update the GitHub secret:
+   - Go to **Settings** → **Secrets and variables** → **Actions**
+   - Click **GCP_SA_KEY** → **Update secret**
+   - Copy entire contents of `new-key.json`
+   - Paste and update
 
-### Images Not Pushed
-- ✓ Check Container Registry API is enabled
-- ✓ Verify service account has `Storage Admin` role
-- ✓ Verify service account has `Viewer` role
-- ✓ Check GCP project quota limits
-- ✓ Ensure the GCP_PROJECT_ID secret matches your actual project
+3. Delete old keys (optional cleanup):
+   ```bash
+   gcloud iam service-accounts keys list \
+     --iam-account=$SERVICE_ACCOUNT_EMAIL
+   
+   # Delete old keys by their key-id if needed
+   gcloud iam service-accounts keys delete KEY_ID \
+     --iam-account=$SERVICE_ACCOUNT_EMAIL
+   ```
 
-### View Detailed Logs
-1. Go to **Actions** → Select failed workflow run
-2. Click on the job to see detailed logs
-3. Check the **Authenticate to Google Cloud** step output
-4. Check the **Configure Docker for GCP** step output
-5. Check the **Push to GCP Container Registry** step output
+### Workflow doesn't trigger
+
+**Problem**: Workflow not executing on push
+
+**Checklist**:
+- [ ] Workflow file exists at `.github/workflows/build-push-gcp.yml`
+- [ ] Pushing to `main`, `master`, or `develop` branch
+- [ ] GitHub Actions is enabled (Settings → Actions)
+- [ ] Both `GCP_PROJECT_ID` and `GCP_SA_KEY` secrets are set
+
+**Solution**: Manually trigger via **Actions** → **Run workflow**
+
+### Images not appearing in Artifact Registry
+
+1. Check workflow ran successfully (green checkmark in Actions)
+2. Verify secrets are correctly set
+3. Check artifact registry repository exists:
+   ```bash
+   gcloud artifacts repositories list --project=$PROJECT_ID
+   ```
+4. If repository doesn't exist, the workflow will create it automatically on first push
 
 ---
 
 ## Security Best Practices
 
-1. **Rotate Keys Regularly**: Regenerate the GCP service account key periodically
-2. **Limit Permissions**: Only grant necessary IAM roles to the service account
-3. **Branch Protection**: Use branch protection rules to require passing checks
-4. **Image Scanning**: The workflow includes optional Trivy scanning for vulnerabilities
-5. **Secret Management**: Never commit `gcp-key.json` to version control
+1. **Never commit `key.json`** - Add to `.gitignore`:
+   ```bash
+   echo "key.json" >> .gitignore
+   ```
+
+2. **Rotate keys periodically** - Delete old keys and create new ones every 90 days
+
+3. **Limit service account permissions** - Only grant roles that are needed
+
+4. **Use branch protection** - Require reviews before merging to `main`
+
+5. **Monitor key usage**:
+   ```bash
+   gcloud logging read \
+     "protoPayload.methodName=google.iam.admin.v1.CreateServiceAccountKey" \
+     --limit 10 \
+     --format json \
+     --project=$PROJECT_ID
+   ```
 
 ---
 
-## Next Steps
+## Using Images in Kubernetes
 
-### Update Your Kubernetes Manifests
-
-Update your Kubernetes deployment files to use the new GCP Container Registry images:
+Update your Kubernetes deployment files:
 
 ```yaml
-# In k8s/backend-deployment.yaml, frontend-deployment.yaml, database-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
 spec:
-  containers:
-  - name: backend
-    image: gcr.io/YOUR-PROJECT-ID/backend:latest  # Updated image reference
-    imagePullPolicy: IfNotPresent
+  template:
+    spec:
+      containers:
+      - name: backend
+        image: asia-south1-docker.pkg.dev/YOUR-PROJECT-ID/containers/backend:latest
+        imagePullPolicy: IfNotPresent
 ```
 
-### Set Up Image Pull Secrets (If Using Private Registry)
-
-If your repository is private, create a Kubernetes secret:
+If using a private Artifact Registry, create an image pull secret:
 
 ```bash
-kubectl create secret docker-registry gcr-secret \
-  --docker-server=gcr.io \
+kubectl create secret docker-registry artifact-registry-secret \
+  --docker-server=asia-south1-docker.pkg.dev \
   --docker-username=_json_key \
-  --docker-password="$(cat gcp-key.json)"
+  --docker-password="$(cat key.json)" \
+  --docker-email=user@example.com
 ```
 
-Then reference in deployments:
+Then reference in deployment:
 ```yaml
 imagePullSecrets:
-- name: gcr-secret
+- name: artifact-registry-secret
 ```
 
 ---
 
-## Additional Resources
+## Cleanup (Optional)
 
-- [Google Cloud Container Registry Documentation](https://cloud.google.com/container-registry/docs)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [google-github-actions/auth](https://github.com/google-github-actions/auth)
-- [Trivy Vulnerability Scanner](https://github.com/aquasecurity/trivy-action)
+### Delete service account:
+
+```bash
+gcloud iam service-accounts delete $SERVICE_ACCOUNT_EMAIL \
+  --project=$PROJECT_ID
+```
+
+### Delete Artifact Registry repository:
+
+```bash
+gcloud artifacts repositories delete containers \
+  --location=asia-south1 \
+  --project=$PROJECT_ID
+```
+
+---
+
+## References
+
+- [Artifact Registry Documentation](https://cloud.google.com/artifact-registry/docs)
+- [GitHub Actions + GCP Auth](https://github.com/google-github-actions/auth)
+- [gcloud IAM Reference](https://cloud.google.com/sdk/gcloud/reference/iam)
