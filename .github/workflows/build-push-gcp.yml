@@ -1,0 +1,111 @@
+name: Build and Push to GCP Container Registry
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'backend/**'
+      - 'database/**'
+      - 'frontend/**'
+      - '.github/workflows/build-push-gcp.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-south1
+  REGISTRY_HOSTNAME: gcr.io
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set build matrix
+        id: set-matrix
+        run: |
+          echo "matrix={\"service\":[\"backend\",\"database\",\"frontend\"]}" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+      fail-fast: false
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCP
+        run: |
+          gcloud auth configure-docker
+
+      - name: Set image tags
+        id: image
+        run: |
+          IMAGE_NAME="${{ matrix.service }}"
+          IMAGE_TAG="gcr.io/${GCP_PROJECT_ID}/${IMAGE_NAME}:${{ github.sha }}"
+          IMAGE_TAG_LATEST="gcr.io/${GCP_PROJECT_ID}/${IMAGE_NAME}:latest"
+          echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "tag_latest=${IMAGE_TAG_LATEST}" >> $GITHUB_OUTPUT
+          echo "Image will be tagged as:"
+          echo "  ${IMAGE_TAG}"
+          echo "  ${IMAGE_TAG_LATEST}"
+
+      - name: Build Docker image - ${{ matrix.service }}
+        run: |
+          docker build \
+            --tag ${{ steps.image.outputs.tag }} \
+            --tag ${{ steps.image.outputs.tag_latest }} \
+            --file ${{ matrix.service }}/Dockerfile \
+            ./${{ matrix.service }}
+
+      - name: Push to GCP Container Registry
+        run: |
+          docker push ${{ steps.image.outputs.tag }}
+          docker push ${{ steps.image.outputs.tag_latest }}
+
+      - name: Image scan with Trivy (optional)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.image.outputs.tag }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  summary:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print build summary
+        run: |
+          echo "Build and push workflow completed!"
+          echo "Images pushed to: gcr.io/${{ env.GCP_PROJECT_ID }}"
