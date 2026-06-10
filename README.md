@@ -1,4 +1,4 @@
-# Student Management System
+# Student Management System for K8s
 
 A full-stack Student Management System built with:
 
